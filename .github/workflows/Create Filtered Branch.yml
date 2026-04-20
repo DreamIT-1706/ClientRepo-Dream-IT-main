@@ -1,0 +1,155 @@
+name: Create Filtered Branch
+
+# Run manually only
+on:
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: 'Source branch to filter from'
+        required: true
+        default: 'main'
+      new_branch:
+        description: 'Name for the new filtered branch'
+        required: true
+        default: 'filtered-branch'
+      folders_to_keep:
+        description: 'Comma-separated EXACT folder names (e.g., BusinessCentral,Shopify) - must match exactly'
+        required: true
+        default: 'BusinessCentral,Shopify'
+
+jobs:
+  create-filtered-branch:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # Checkout repository
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        ref: ${{ github.event.inputs.source_branch }}
+        fetch-depth: 0
+        token: ${{ secrets.PAT_GITHUB }}
+
+    # Configure Git
+    - name: Configure Git
+      run: |
+        git config user.name "GitHub Actions Bot"
+        git config user.email "actions@github.com"
+
+    # Create new branch
+    - name: Create new branch
+      run: |
+        echo "🌿 Creating branch: ${{ github.event.inputs.new_branch }}"
+        git checkout -b ${{ github.event.inputs.new_branch }}
+
+    # Filter folders - Keep only specified folders
+    - name: Filter folders
+      run: |
+        echo "============================================"
+        echo "📂 Creating Filtered Branch"
+        echo "============================================"
+        echo ""
+        echo "✅ Folders to include in new branch: ${{ github.event.inputs.folders_to_keep }}"
+        echo ""
+        
+        # Convert comma-separated list to array
+        IFS=',' read -ra FOLDERS <<< "${{ github.event.inputs.folders_to_keep }}"
+        
+        # Display folders that will be included
+        echo "📁 Checking specified folders:"
+        for folder in "${FOLDERS[@]}"; do
+            folder=$(echo "$folder" | xargs)
+            if [ -d "$folder" ]; then
+                echo "   ✓ $folder/ (found)"
+            else
+                echo "   ✗ $folder/ (NOT FOUND - check spelling!)"
+            fi
+        done
+        echo ""
+        
+        # Get all files in repository
+        all_files=$(git ls-files)
+        
+        # Counter for kept files
+        kept_count=0
+        
+        # List files that will be kept
+        echo "📄 Files being added to new branch:"
+        echo ""
+        for file in $all_files; do
+            keep_file=false
+            
+            # Check if file is in one of our folders to keep
+            for folder in "${FOLDERS[@]}"; do
+                folder=$(echo "$folder" | xargs)
+                
+                # EXACT MATCH ONLY: File must be folder/something or folder/path/something
+                # This prevents "Shopify" from matching "config_shopify" or "br_to_sil_shopify"
+                if [[ $file =~ ^${folder}/.*$ ]]; then
+                    keep_file=true
+                    kept_count=$((kept_count + 1))
+                    echo "   ✓ $file"
+                    break
+                fi
+            done
+            
+            # Remove file from new branch if not in keep list
+            # This removes EVERYTHING else including .github/workflows, README, etc.
+            if [ "$keep_file" = false ]; then
+                git rm -f "$file" 2>/dev/null || true
+            fi
+        done
+        
+        # Remove all directories that are not in our keep list
+        echo ""
+        for dir in */; do
+            dir=${dir%/}  # Remove trailing slash
+            keep_dir=false
+            
+            for folder in "${FOLDERS[@]}"; do
+                folder=$(echo "$folder" | xargs)
+                # EXACT directory name match
+                if [ "$dir" = "$folder" ]; then
+                    keep_dir=true
+                    break
+                fi
+            done
+            
+            if [ "$keep_dir" = false ]; then
+                git rm -rf "$dir" 2>/dev/null || true
+            fi
+        done
+        
+        # Explicitly remove .github folder if it exists
+        if [ -d ".github" ]; then
+            echo ""
+            git rm -rf .github 2>/dev/null || true
+        fi
+        
+        echo ""
+        echo "📊 Summary:"
+        echo "   • Total files in new branch: $kept_count"
+        echo ""
+        echo "✅ Branch filtering complete!"
+
+    # Commit changes
+    - name: Commit changes
+      run: |
+        echo "💾 Committing changes to new branch..."
+        git status
+        if git diff --cached --quiet; then
+          echo "⚠️  No changes to commit (all files were kept)"
+        else
+          git commit -m "Created filtered branch with only: ${{ github.event.inputs.folders_to_keep }}" || echo "No changes to commit"
+        fi
+
+    # Push branch
+    - name: Push new filtered branch only
+      run: |
+        echo "🚀 Pushing ONLY the filtered branch: ${{ github.event.inputs.new_branch }}"
+        echo "ℹ️  Main branch will NOT be modified or pushed"
+        git push origin ${{ github.event.inputs.new_branch }} --force
+        echo ""
+        echo "✅ Successfully created filtered branch!"
+        echo "📋 Branch name: ${{ github.event.inputs.new_branch }}"
+        echo "📁 Contains only: ${{ github.event.inputs.folders_to_keep }}"
