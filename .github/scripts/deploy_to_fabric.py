@@ -314,7 +314,7 @@ def deploy_pipeline(token, workspace_id, pipeline_folder_path):
 
     if not pipeline_file:
         print(f"      ⚠️  No pipeline definition file found - skipping")
-        return False
+        return True
 
     with open(pipeline_file, 'r') as f:
         content = f.read()
